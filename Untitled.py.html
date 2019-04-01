@@ -1,0 +1,242 @@
+
+# coding: utf-8
+
+# In[1]:
+
+import pandas as pd
+
+
+# In[2]:
+
+fram = pd.read_csv('framingham.csv')
+fram.head()
+
+
+# In[3]:
+
+from sklearn.tree import DecisionTreeClassifier
+
+
+# In[4]:
+
+fram.columns
+
+
+# In[5]:
+
+dt= DecisionTreeClassifier(max_depth=5)
+fram.fillna(-999, inplace = True)
+dt.fit(fram.iloc[:,0:6], fram['TenYearCHD'])
+
+
+# In[6]:
+
+get_ipython().magic(u'matplotlib inline')
+from sklearn import tree
+from sklearn.externals.six import StringIO  
+from IPython.display import Image  
+from sklearn.tree import export_graphviz
+import pydotplus
+import collections
+dot_data = tree.export_graphviz(dt,
+                                feature_names=fram.iloc[:,0:6].columns,
+                                out_file=None,
+                                filled=True,
+                                rounded=True)
+graph = pydotplus.graph_from_dot_data(dot_data)
+
+colors = ('turquoise', 'orange')
+edges = collections.defaultdict(list)
+
+for edge in graph.get_edge_list():
+    edges[edge.get_source()].append(int(edge.get_destination()))
+
+for edge in edges:
+    edges[edge].sort()    
+    for i in range(2):
+        dest = graph.get_node(str(edges[edge][i]))[0]
+        dest.set_fillcolor(colors[i])
+
+graph.write_png('tree.png')
+
+
+# In[7]:
+
+from sklearn.tree import _tree
+
+def tree_to_code(tree, feature_names):
+
+
+    tree_ = tree.tree_
+    feature_name = [feature_names[i] if i != _tree.TREE_UNDEFINED else "undefined!" for i in tree_.feature]
+    print "def tree({}):".format(", ".join(feature_names))
+
+    def recurse(node, depth):
+        indent = "  " * depth
+        if tree_.feature[node] != _tree.TREE_UNDEFINED:
+            name = feature_name[node]
+            threshold = tree_.threshold[node]
+            print "{}if {} <= {}:".format(indent, name, threshold)
+            recurse(tree_.children_left[node], depth + 1)
+            print "{}else:  # if {} > {}".format(indent, name, threshold)
+            recurse(tree_.children_right[node], depth + 1)
+        else:
+            print "{}return {}".format(indent, tree_.value[node])
+
+    recurse(0, 1)
+    
+tree_to_code(dt, fram.iloc[:,0:6].columns)
+
+
+# In[8]:
+
+def tree_to_pseudo(tree, feature_names):
+    left = tree.tree_.children_left
+    right = tree.tree_.children_right
+    threshold = tree.tree_.threshold
+    features = [feature_names[i] for i in tree.tree_.feature]
+    value = tree.tree_.value
+
+    def recurse(left, right, threshold, features, node, depth=0):
+        indent = "  " * depth
+        if (threshold[node] != -2):
+            print indent,"if ( " + features[node] + " <= " + str(threshold[node]) + " ) {"
+            if left[node] != -1:
+                recurse (left, right, threshold, features, left[node], depth+1)
+                print indent,"} else {"
+                if right[node] != -1:
+                    recurse (left, right, threshold, features, right[node], depth+1)
+                print indent,"}"
+        else:
+            print indent,"return " + str(value[node])
+
+    recurse(left, right, threshold, features, 0)
+    
+tree_to_pseudo(dt, fram.iloc[:,0:6].columns)
+
+
+# In[46]:
+
+import numpy as np
+def get_lineage(tree, feature_names):
+    left      = tree.tree_.children_left
+    right     = tree.tree_.children_right
+    threshold = tree.tree_.threshold
+    features  = [feature_names[i] for i in tree.tree_.feature]
+
+    # get ids of child nodes
+    idx = np.argwhere(left == -1)[:,0]
+    df = pd.DataFrame(columns = ['rule','confidence'])
+
+    def recurse(left, right, child, lineage=None):          
+        if lineage is None:
+            lineage = [child]
+        if child in left:
+            parent = np.where(left == child)[0].item()
+            split = '<='
+            vals = tree.tree_.value[left][0][0]
+        else:
+            parent = np.where(right == child)[0].item()
+            split = '>'
+            vals = tree.tree_.value[right][0][0]
+
+        lineage.append("".join([features[parent],split, str(round(threshold[parent],4))]))
+
+        if parent == 0:
+            lineage.reverse()
+            vals = tree.tree_.value[lineage[-1]][0]
+            rule = "if "+" & ".join(lineage[:-1])
+            return [(lineage[-1],rule,vals)]
+        else:
+            return recurse(left, right, parent, lineage)
+
+    for child in idx:
+        for node in recurse(left, right, child):
+            df.loc[node[0],"rule"] = node[1]
+            vals = node[2]
+            df.loc[node[0], "confidence"] = vals[1]/(vals[1]+vals[0])
+            df.loc[node[0],"support"] = np.round(vals[1]+vals[0])
+    return df
+rules = get_lineage(dt, fram.iloc[:,0:6].columns.tolist())
+rules['recall'] = (rules['confidence']*rules['support'])/(rules['confidence']*rules['support']).sum()
+
+
+# In[47]:
+
+pd.set_option("max_colwidth",1000)
+rules
+
+
+# In[48]:
+
+dt
+
+
+# In[49]:
+
+fram.iloc[:,0:6].columns.tolist()
+
+
+# In[50]:
+
+rules.rule
+
+
+# In[58]:
+
+sentence = "if age<=48.5 & cigsPerDay<=16.5 & age<=42.5 & male<=0.5 & age>39.5"
+
+def extract_from_regex(row, patterns):
+    ser = pd.Series()
+    cols = list()
+    list_cols = [itm for ls in new_cols for itm in ls]
+    for c in list_cols:
+        ser[c] = np.nan
+    for m in patterns:
+        pat = re.compile(m)
+        if re.search(pat,row):
+            found = re.findall(pat,row)
+            #vals = found.groups()
+            print found
+
+
+pats = ['if (.+?)<=(\d*\.*\d+)','& (.+?)<=(\d*\.*\d+)','& (.+?)>(\d*\.*\d+)']
+#new_cols = ['age','cigsPerDay','male']
+extract_from_regex(sentence, pats)
+
+
+# In[61]:
+
+sentence = "if age<=48.5 & cigsPerDay<=16.5 & age<=42.5 & male<=0.5 & age>39.5"
+
+def extract_from_regex(row, patterns):
+    ser = pd.Series()
+    cols = list()
+    list_cols = [itm for ls in new_cols for itm in ls]
+    for c in list_cols:
+        ser[c] = np.nan
+    for m in patterns:
+        pat = re.compile(m)
+        if re.search(pat,row):
+            found = re.findall(pat,row)
+            #vals = found.groups()
+            print found
+
+
+pats = ['if (.+?)<=(\d*\.*\d+)','& (.+?)<=(\d*\.*\d+)','& (.+?)>(\d*\.*\d+)']
+#new_cols = ['age','cigsPerDay','male']
+extract_from_regex(sentence, pats)
+
+
+# In[28]:
+
+import re
+txt = 'if age <= 48.5 & cigsPerDay <= 16.5 & age <= 42.5 & male <= 0.5 & age <= 39.5'
+match = re.search(r"(?<= )\S+(?= \S+$)", txt)
+match.group()
+
+
+# In[ ]:
+
+re.search("^The.*Spain$", txt)
+
